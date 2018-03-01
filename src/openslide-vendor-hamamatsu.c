@@ -98,6 +98,7 @@ static const int KEY_FILE_MAX_SIZE = 64 << 10;
 
 struct jpeg {
   char *filename;
+  FILE *file;
   int64_t start_in_file;
   int64_t end_in_file;
 
@@ -284,6 +285,9 @@ static void jpeg_destroy_data(int32_t num_jpegs, struct jpeg **jpegs,
   for (int32_t i = 0; i < num_jpegs; i++) {
     struct jpeg *jpeg = jpegs[i];
     g_free(jpeg->filename);
+    if (jpeg->file) {
+      fclose(jpeg->file);
+    }
     g_free(jpeg->mcu_starts);
     g_free(jpeg->unreliable_mcu_starts);
     g_slice_free(struct jpeg, jpeg);
@@ -593,7 +597,10 @@ static bool read_from_jpeg(openslide_t *osr,
   volatile bool success = false;
 
   // open file
-  FILE *f = _openslide_fopen(jpeg->filename, "rb", err);
+  if (!(jpeg->file)) {
+      jpeg->file = _openslide_fopen(jpeg->filename, "rb", err);
+  }
+  FILE *f = jpeg->file;
   if (f == NULL) {
     return false;
   }
@@ -603,6 +610,8 @@ static bool read_from_jpeg(openslide_t *osr,
   struct _openslide_jpeg_decompress *dc =
     _openslide_jpeg_decompress_create(&cinfo);
   jmp_buf env;
+
+  flockfile(f);
 
   // figure out where to start the data stream
   // volatile to avoid spurious longjmp clobber warnings
@@ -653,7 +662,12 @@ static bool read_from_jpeg(openslide_t *osr,
 
 OUT:
   _openslide_jpeg_decompress_destroy(dc);
-  fclose(f);
+  if (!success) {
+    fclose(f);
+    jpeg->file = NULL;
+  } else {
+    funlockfile(f);
+  }
   return success;
 }
 
